@@ -25,6 +25,7 @@ const S = {
   day: null, deliveries: [], unsubs: [],
   unlocked: false,
   hideDone: prefs.get('hideDone', false),
+  search: '',
   sort: prefs.get('sort', 'updated'),
   me: null, dist: {}, distAt: null,
   streets: {}, settings: { ...DEFAULT_SETTINGS },
@@ -50,15 +51,77 @@ function toast(msg, { err = false, ms = 3200 } = {}) {
   if (ms) toast._t = setTimeout(() => (t.hidden = true), ms);
 }
 
+// Windows (sheets) stack on top of each other. Each open window owns one browser-history
+// entry, so the phone's Back button closes the top window and returns to the previous one.
+const modalStack = [];
+let histDepth = 0;      // history entries currently owned by open windows
+let ignorePops = 0;     // popstate events caused by our own history.go()
+let syncTimer = null;
+
+function syncHistory() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    const extra = histDepth - modalStack.length;
+    if (extra > 0) { histDepth = modalStack.length; ignorePops++; history.go(-extra); }
+  }, 0);
+}
+
 function openModal(build, { onClose } = {}) {
   const root = $('#modalRoot');
   const sheet = el('div', { class: 'sheet', role: 'dialog' });
   const overlay = el('div', { class: 'overlay' }, sheet);
-  const close = () => { overlay.remove(); onClose?.(); };
+  const entry = { closed: false };
+  entry.remove = () => {
+    if (entry.closed) return;
+    entry.closed = true;
+    overlay.remove();
+    modalStack.splice(modalStack.indexOf(entry), 1);
+    onClose?.();
+  };
+  const close = () => { entry.remove(); syncHistory(); };
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  sheet.append(el('div', { class: 'sheet-head' },
+    el('button', { class: 'sheet-back', type: 'button', onclick: close }, modalStack.length ? '→ חזרה' : '→ סגור')));
   build(sheet, close);
   root.append(overlay);
+  modalStack.push(entry);
+  history.pushState({ smartrun: 'modal' }, '');
+  histDepth++;
   return close;
+}
+
+// Close every open window (used after an action finishes).
+function closeAll() {
+  [...modalStack].reverse().forEach((e) => e.remove());
+  syncHistory();
+}
+
+function showExitPrompt() {
+  if ($('#exitPrompt')) return;
+  const stay = () => { box.remove(); history.pushState({ smartrun: 'guard' }, ''); };
+  const box = el('div', { class: 'overlay', id: 'exitPrompt' }, el('div', { class: 'sheet' },
+    el('h2', {}, 'לצאת מ-SmartRun?'),
+    el('p', { class: 'muted' }, 'כל הנתונים שמורים בענן. לחיצה נוספת על "חזרה" בטלפון תסגור את האפליקציה.'),
+    el('div', { class: 'sheet-actions' },
+      el('button', { class: 'btn primary', type: 'button', onclick: stay }, 'הישאר'),
+      el('button', { class: 'btn danger', type: 'button', onclick: () => { box.remove(); history.back(); setTimeout(() => window.close(), 300); } }, 'יציאה'),
+    )));
+  box.addEventListener('click', (e) => { if (e.target === box) stay(); });
+  document.body.append(box);
+}
+
+function onPopState() {
+  if (ignorePops > 0) { ignorePops--; return; }
+  if ($('#exitPrompt')) { $('#exitPrompt').remove(); return; } // second Back while the prompt is up → leave
+  if (modalStack.length) {
+    histDepth = Math.max(0, histDepth - 1);
+    modalStack[modalStack.length - 1].remove();
+    return;
+  }
+  history.pushState({ smartrun: 'guard' }, '');
+  if (S.pickFor) { S.pickFor = null; $('#pickHint').hidden = true; return; }
+  if (S.search) { setSearch(''); return; }
+  showExitPrompt();
 }
 
 function confirmModal({ title, body, okText = 'אישור', danger = false, requireWord = null }) {
@@ -329,12 +392,12 @@ function statusSheet(d) {
     for (const [key, s] of Object.entries(STATUS)) {
       box.append(el('button', {
         class: 'btn' + (d.status === key ? ' cur' : ''), type: 'button',
-        onclick: async () => { close(); await setStatus(d, key); },
+        onclick: async () => { closeAll(); await setStatus(d, key); },
       }, `${s.icon} ${s.label}`));
     }
     m.append(box);
     if (isFinal(d) && !d.movedTo) {
-      m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: async () => { close(); await setStatus(d, 'pending'); } }, '↩ בטל – חזרה לממתין')));
+      m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: async () => { closeAll(); await setStatus(d, 'pending'); } }, '↩ בטל – חזרה לממתין')));
     }
     if (d.history?.length) {
       m.append(el('h3', {}, 'היסטוריה'), el('div', { class: 'muted' },
@@ -436,7 +499,13 @@ function renderNext() {
   box.hidden = false;
   box.replaceChildren(...[
     el('div', { class: 'lbl' }, `העצירה הבאה · מסלול מעודכן ${stopLabel(next.updatedStop, next.updatedSub) ?? '—'} · ראשוני ${stopLabel(next.initialStop, next.initialSub) ?? '—'}`),
-    el('div', { class: 'who' }, `${next.name || ''} – ${fullAddress(next)}`),
+    el('div', { class: 'who' }, next.name || '—'),
+    el('div', { class: 'where' }, fullAddress(next)),
+    el('div', { class: 'info' },
+      el('span', {}, el('small', {}, 'אפליקציה '), next.appOrder != null ? '#' + next.appOrder : '—'),
+      el('span', {}, el('small', {}, "אס' 2 "), next.ref || '—'),
+      el('span', {}, el('small', {}, 'משלוח '), next.shipmentId),
+    ),
     el('div', { class: 'row' },
       el('a', { class: 'btn waze small', href: wazeUrl(next), target: '_blank', rel: 'noopener' }, 'נווט ב-Waze'),
       el('a', { class: 'btn gmaps small', href: gmapsUrl(next), target: '_blank', rel: 'noopener' }, 'Google Maps'),
@@ -454,6 +523,22 @@ function scrollToCard(id) {
   c.scrollIntoView({ behavior: 'smooth', block: 'center' });
   c.classList.add('highlight');
   setTimeout(() => c.classList.remove('highlight'), 1800);
+}
+
+// Search by name, address, shipment number, ref (אס' 2) or app order. Includes completed deliveries.
+function matches(d, q) {
+  const raw = S.search.trim();
+  if (/^#\d+$/.test(raw)) return d.appOrder === +raw.slice(1);          // "#22" → app order only
+  if (/^\d{3,}$/.test(raw)) return String(d.shipmentId).includes(raw) || String(d.ref || '').includes(raw);
+  if (/^\d{1,2}$/.test(raw)) return d.appOrder === +raw || String(d.houseNo) === raw;
+  return norm(`${d.name} ${d.street} ${d.houseNo} ${d.city}`).includes(q) || norm(d.ref).includes(q);
+}
+
+function setSearch(v) {
+  S.search = v;
+  $('#searchInput').value = v;
+  $('#searchClear').hidden = !v;
+  render();
 }
 
 function renderCounts() {
@@ -488,9 +573,13 @@ function render() {
 
   renderCounts();
   renderNext();
-  const list = sorted(S.deliveries.filter((d) => !(S.hideDone && isFinal(d))));
+  const q = norm(S.search);
+  const shown = S.deliveries.filter((d) => !(S.hideDone && isFinal(d)));
+  const list = sorted(q ? S.deliveries.filter((d) => matches(d, q)) : shown);
   $('#list').replaceChildren(...list.map(card));
   $('#empty').hidden = S.deliveries.length > 0;
+  $('#searchInfo').hidden = !q;
+  $('#searchInfo').textContent = q ? (list.length ? `${list.length} תוצאות` : 'לא נמצאו תוצאות') : '';
   renderMap();
 }
 
@@ -539,6 +628,8 @@ function renderMap() {
 
 function toggleMap(show = $('#mapWrap').hidden) {
   $('#mapWrap').hidden = !show;
+  $('#mapToggle').setAttribute('aria-expanded', String(show));
+  $('#mapToggle .chev').textContent = show ? 'הסתר ▴' : 'הצג ▾';
   prefs.set('mapOpen', show);
   if (show) {
     ensureMap();
@@ -599,7 +690,7 @@ function editSheet(d) {
     const save = async (recheck) => {
       const data = collect();
       const addrChanged = addressKey(data) !== addressKey(d);
-      close();
+      closeAll();
       await S.db.updateDelivery(S.date, d.shipmentId, data);
       if (addrChanged || recheck) {
         toast('בודק כתובת…', { ms: 0 });
@@ -611,10 +702,10 @@ function editSheet(d) {
       el('button', { class: 'btn primary', type: 'button', onclick: () => save(false) }, 'שמור'),
       el('button', { class: 'btn', type: 'button', onclick: () => save(true) }, '🔍 שמור ובדוק שוב'),
     ), el('div', { class: 'sheet-actions' },
-      el('button', { class: 'btn', type: 'button', onclick: () => { close(); startPick(d); } }, '📍 סמן על המפה'),
+      el('button', { class: 'btn', type: 'button', onclick: () => { closeAll(); startPick(d); } }, '📍 סמן על המפה'),
       el('button', { class: 'btn danger', type: 'button', onclick: async () => {
         if (await confirmModal({ title: 'מחיקת משלוח', body: `למחוק את ${esc(d.shipmentId)} (${esc(d.name || '')})?`, okText: 'מחק', danger: true })) {
-          close(); await S.db.deleteDeliveries(S.date, [d.shipmentId]); toast('נמחק');
+          closeAll(); await S.db.deleteDeliveries(S.date, [d.shipmentId]); toast('נמחק');
         }
       } }, '🗑 מחק'),
     ));
@@ -680,7 +771,7 @@ function importSheet() {
       el('p', { class: 'muted' }, 'הדבק את הטבלה שקיבלת מ-Claude (או מ-Excel). אפשר גם עמודת "כתובת" אחת במקום רחוב + מספר.'),
       el('label', { class: 'field' }, 'נתונים', ta),
       el('div', { class: 'sheet-actions' },
-        el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); close(); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
+        el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
         el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול'),
       ),
     );
@@ -725,7 +816,7 @@ function previewSheet(rows) {
         return r;
       }).filter((r) => r.shipmentId && r.street);
       if (!chosen.length) return toast('לא סומנו שורות', { err: true });
-      close();
+      closeAll();
       const docs = chosen.map((r) => {
         const base = {
           shipmentId: r.shipmentId, name: r.name, street: r.street, houseNo: r.houseNo,
@@ -753,7 +844,7 @@ function previewSheet(rows) {
       el('div', { class: 'tbl-wrap' }, table),
       el('div', { class: 'sheet-actions' },
         el('button', { class: 'btn primary', type: 'button', onclick: confirm }, '✓ אשר ייבוא'),
-        el('button', { class: 'btn', type: 'button', onclick: () => { close(); importSheet(); } }, 'חזור'),
+        el('button', { class: 'btn', type: 'button', onclick: close }, 'חזור לעריכה'),
       ),
     );
   });
@@ -806,8 +897,8 @@ function routeChoiceSheet() {
       el('h2', {}, '🧭 כבר קיים מסלול'),
       el('p', {}, `המסלול הראשוני נבנה ${S.day.initialBuiltAt ? 'ב-' + fmtTime(S.day.initialBuiltAt) : ''} ואינו משתנה. נשארו ${act} משלוחים פעילים.`),
       el('div', { class: 'status-opts' },
-        el('button', { class: 'btn primary', type: 'button', onclick: () => { close(); routeBuildSheet('updated'); } }, '🔄 בנה מסלול מעודכן (רק ממתין + לא ענה זמני)'),
-        el('button', { class: 'btn', type: 'button', onclick: () => { close(); stayOnRouteSheet(); } }, '➡️ השאר את המסלול הקיים – מאיפה להמשיך?'),
+        el('button', { class: 'btn primary', type: 'button', onclick: () => routeBuildSheet('updated') }, '🔄 בנה מסלול מעודכן (רק ממתין + לא ענה זמני)'),
+        el('button', { class: 'btn', type: 'button', onclick: () => stayOnRouteSheet() }, '➡️ השאר את המסלול הקיים – מאיפה להמשיך?'),
       ),
     );
   });
@@ -850,7 +941,7 @@ function routeBuildSheet(kind) {
       let s, e;
       try { s = start.get(); e = end.get(); } catch (err) { return toast(err.message, { err: true }); }
       go.disabled = true;
-      try { await buildRoute(kind, s, e); close(); S.sort = 'updated'; prefs.set('sort', 'updated'); render(); }
+      try { await buildRoute(kind, s, e); closeAll(); S.sort = 'updated'; prefs.set('sort', 'updated'); render(); }
       catch (err) { console.error(err); toast(err.message, { err: true, ms: 6000 }); go.disabled = false; }
     });
     m.append(el('div', { class: 'sheet-actions' }, go, el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול')));
@@ -873,16 +964,16 @@ async function daysSheet() {
     m.append(
       el('h2', {}, '📅 ימים ותאריכים'),
       el('div', { class: 'row2' }, el('label', { class: 'field' }, 'פתח תאריך', input),
-        el('div', { class: 'field' }, ' ', el('button', { class: 'btn primary', type: 'button', onclick: () => { if (input.value) { close(); openDate(input.value); } } }, 'פתח'))),
+        el('div', { class: 'field' }, ' ', el('button', { class: 'btn primary', type: 'button', onclick: () => { if (input.value) { closeAll(); openDate(input.value); } } }, 'פתח'))),
       el('h3', {}, 'ימים קודמים'),
     );
     const list = el('div', { class: 'days-list' });
     if (!days.some((d) => d.date === S.today)) days.unshift({ date: S.today, total: 0, active: 0 });
     days.forEach((d) => list.append(el('button', {
-      class: 'btn' + (d.date === S.date ? ' cur' : ''), type: 'button', onclick: () => { close(); openDate(d.date); },
+      class: 'btn' + (d.date === S.date ? ' cur' : ''), type: 'button', onclick: () => { closeAll(); openDate(d.date); },
     }, el('span', {}, fmtDate(d.date)), el('span', { class: 'muted' }, `${d.total ?? 0} משלוחים${d.active ? ` · ${d.active} פעילים` : ''}`))));
     m.append(list, el('div', { class: 'sheet-actions' },
-      el('button', { class: 'btn', type: 'button', onclick: () => { close(); newDaySheet(); } }, '🆕 יום חדש'),
+      el('button', { class: 'btn', type: 'button', onclick: () => newDaySheet() }, '🆕 יום חדש'),
       el('button', { class: 'btn', type: 'button', onclick: close }, 'סגור')));
   });
 }
@@ -915,7 +1006,7 @@ function newDaySheet() {
       const actions = el('div', { class: 'status-opts', style: 'margin-top:10px' });
       if (act.length && !same) {
         actions.append(el('button', { class: 'btn primary', type: 'button', onclick: async () => {
-          close(); await moveActives(cur, target, act); toast(`${act.length} משלוחים הועברו ל-${target.split('-').reverse().join('/')}`); openDate(target);
+          closeAll(); await moveActives(cur, target, act); toast(`${act.length} משלוחים הועברו ל-${target.split('-').reverse().join('/')}`); openDate(target);
         } }, `➡️ העבר ${act.length} פעילים ל${fmtDate(target)}`));
       }
       actions.append(el('button', { class: 'btn danger', type: 'button', onclick: async () => {
@@ -928,7 +1019,7 @@ function newDaySheet() {
           okText: same ? 'אפס' : 'התחל יום ריק', danger: true, requireWord: word,
         });
         if (!ok) return;
-        close();
+        closeAll();
         if (same) {
           await S.db.deleteDeliveries(cur, S.deliveries.map((d) => d.shipmentId));
           await S.db.saveDay(cur, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null });
@@ -1011,7 +1102,7 @@ async function settingsSheet() {
       S.settings = next;
       await S.db.setMeta('settings', next);
       maps.configure({ geocoderName: next.geocoder, googleKey: next.googleKey });
-      close(); toast('ההגדרות נשמרו ✓');
+      closeAll(); toast('ההגדרות נשמרו ✓');
     };
     const actions = el('div', { class: 'sheet-actions' },
       el('button', { class: 'btn primary', type: 'button', onclick: save }, 'שמור'),
@@ -1019,21 +1110,39 @@ async function settingsSheet() {
     m.append(actions);
     const failed = S.deliveries.filter((d) => d.geoStatus !== 'ok' && d.geoStatus !== 'manual');
     if (failed.length && !readonly()) {
-      m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: async () => { close(); await geocodeMany(failed, { force: true }); } }, `🔍 אתר מחדש ${failed.length} כתובות לא מדויקות`)));
+      m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: async () => { closeAll(); await geocodeMany(failed, { force: true }); } }, `🔍 אתר מחדש ${failed.length} כתובות לא מדויקות`)));
     }
-    if (S.db.mode === 'firebase') m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn danger', type: 'button', onclick: () => { close(); S.db.signOut(); } }, 'התנתק')));
+    if (S.db.mode === 'firebase') m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn danger', type: 'button', onclick: () => { closeAll(); S.db.signOut(); } }, 'התנתק')));
   });
+}
+
+// Wipe the day currently shown (deliveries + route). Always requires typing "איפוס".
+async function resetDay() {
+  const act = S.deliveries.filter(isActive).length;
+  const body = el('div', {},
+    act ? el('div', { class: 'danger-box' }, `⚠️ נשארו ${act} משלוחים פעילים (ממתין / לא ענה זמני)!`) : null,
+    el('p', { html: `<b style="color:var(--danger)">כל ${S.deliveries.length} המשלוחים של ${esc(fmtDate(S.date))} יימחקו, כולל המסלול הראשוני והמעודכן.</b>` }),
+    act ? el('p', { class: 'muted' }, 'כדי להעביר אותם ליום אחר במקום למחוק: ☰ ← יום חדש.') : null,
+  );
+  const ok = await confirmModal({ title: '🗑 איפוס היום', body, okText: 'אפס', danger: true, requireWord: 'איפוס' });
+  if (!ok) return;
+  closeAll();
+  await S.db.deleteDeliveries(S.date, S.deliveries.map((d) => d.shipmentId));
+  await S.db.saveDay(S.date, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null, updatedBuiltAt: null });
+  S.dist = {};
+  toast('היום אופס');
 }
 
 function menuSheet() {
   openModal((m, close) => {
-    const item = (label, fn, disabled = false) => el('button', { class: 'btn', type: 'button', disabled, onclick: () => { close(); fn(); } }, label);
+    const item = (label, fn, disabled = false, keepMenu = true) => el('button', { class: 'btn', type: 'button', disabled, onclick: () => { if (!keepMenu) close(); fn(); } }, label);
     m.append(el('h2', {}, 'תפריט'), el('div', { class: 'menu-list' },
       item('🆕 יום חדש', newDaySheet, readonly()),
       item('📅 ימים קודמים / בחירת תאריך', daysSheet),
       item('🗺️ מסלול מלא ב-Google Maps', segmentsSheet),
-      item('📤 ייצוא CSV', exportCsv),
+      item('📤 ייצוא CSV', exportCsv, false, false),
       item('⚙️ הגדרות', settingsSheet),
+      el('button', { class: 'btn danger-outline', type: 'button', disabled: readonly() || !S.deliveries.length, onclick: resetDay }, '🗑 איפוס היום'),
     ));
   });
 }
@@ -1072,7 +1181,13 @@ function bindUi() {
   $('#refreshBtn').addEventListener('click', refreshLocation);
   $('#routeBtn').addEventListener('click', routeSheet);
   $('#importBtn').addEventListener('click', importSheet);
-  $('#mapBtn').addEventListener('click', () => toggleMap());
+  $('#mapToggle').addEventListener('click', () => toggleMap());
+  $('#searchInput').addEventListener('input', (e) => { S.search = e.target.value; $('#searchClear').hidden = !S.search; render(); });
+  $('#searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+  $('#searchClear').addEventListener('click', () => { setSearch(''); $('#searchInput').focus(); });
+  window.addEventListener('popstate', onPopState);
+  history.replaceState({ smartrun: 'root' }, '');
+  history.pushState({ smartrun: 'guard' }, '');
   $('#pickCancel').addEventListener('click', () => { S.pickFor = null; $('#pickHint').hidden = true; });
   $('#hideDone').addEventListener('change', (e) => { S.hideDone = e.target.checked; prefs.set('hideDone', S.hideDone); render(); });
   $('#sortSel').addEventListener('change', (e) => {
@@ -1111,6 +1226,7 @@ async function boot() {
     $('#loading').hidden = true;
     $('#login').hidden = !!user;
     $('#app').hidden = !user;
+    $('#searchBar').hidden = !user;
     if (!user) { S.unsubs.forEach((u) => u()); S.unsubs = []; return; }
     const saved = await S.db.getMeta('settings').catch(() => null);
     S.settings = { ...DEFAULT_SETTINGS, ...(saved || {}) };

@@ -44,8 +44,8 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 
+.sticky-top { position: sticky; top: 0; z-index: 1000; }
 .topbar {
-  position: sticky; top: 0; z-index: 1000;
   display: flex; align-items: center; gap: 8px;
   background: var(--top); color: var(--top-text);
   padding: 10px 16px; padding-top: calc(10px + env(safe-area-inset-top));
@@ -80,7 +80,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.waze { background: #33ccff; border-color: #33ccff; color: #05233a; }
 .btn.gmaps { background: #fff; color: #1a73e8; border-color: #c6dafc; }
 
-.toolbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 10px 16px 0; }
+.toolbar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px 16px 0; }
 .toolbar .btn { padding: 10px 4px; font-size: 13px; flex-direction: column; }
 
 .summary { padding: 10px 16px 0; }
@@ -100,11 +100,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .next-stop .lbl { font-size: 12px; opacity: .85; }
 .next-stop .who { font-weight: 700; font-size: 17px; margin: 2px 0; }
+.next-stop .where { font-size: 15px; opacity: .95; }
+.next-stop .info { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.next-stop .info span { background: rgba(255,255,255,.18); border-radius: 8px; padding: 3px 8px; font-weight: 700; font-size: 14px; direction: rtl; }
+.next-stop .info small { font-weight: 400; opacity: .85; font-size: 11px; }
 .next-stop .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .next-stop .alt { font-size: 13px; opacity: .9; margin-top: 6px; }
 
-.map-wrap { margin: 10px 16px 0; position: relative; }
-#map { height: 42vh; min-height: 260px; border-radius: var(--radius); border: 1px solid var(--line); z-index: 1; }
+.map-toggle {
+  display: flex; justify-content: space-between; align-items: center; width: calc(100% - 32px); margin: 10px 16px 0;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; font-weight: 500; cursor: pointer;
+}
+.map-toggle[aria-expanded="true"] { border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0; }
+.map-toggle .chev { color: var(--muted); font-size: 14px; }
+.map-wrap { margin: 0 16px; position: relative; }
+#map { height: 38vh; min-height: 240px; border-radius: 0 0 var(--radius) var(--radius); border: 1px solid var(--line); z-index: 1; }
 .pick-hint { position: absolute; top: 8px; right: 8px; left: 8px; z-index: 500; background: var(--warn); color: #fff; padding: 8px 10px; border-radius: 10px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .stop-marker { direction: ltr; background: var(--primary); color: #fff; border: 2px solid #fff; border-radius: 999px; min-width: 28px; height: 28px; padding: 0 5px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.4); white-space: nowrap; }
 .stop-marker.temp { background: var(--warn); }
@@ -158,6 +168,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   border-radius: 16px 16px 0 0; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
 @media (min-width: 760px) { .overlay { align-items: center; } .sheet { border-radius: 16px; } }
+.sheet-head { position: sticky; top: -16px; z-index: 5; background: var(--card); margin: -16px -16px 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; }
+.sheet-back { background: transparent; border: 0; color: var(--primary); font-weight: 700; font-size: 16px; padding: 6px 4px; cursor: pointer; }
+.btn.danger-outline { color: var(--danger); border-color: var(--danger); }
+.search-bar { display: flex; align-items: center; gap: 6px; background: var(--card); border-bottom: 1px solid var(--line); padding: 6px 16px; }
+.search-bar input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; background: var(--bg); font-size: 15px; }
+.search-bar input::-webkit-search-cancel-button { display: none; }
+.search-ico { font-size: 14px; opacity: .7; }
+.search-clear { border: 0; background: var(--line); color: var(--text); width: 30px; height: 30px; border-radius: 50%; font-size: 14px; cursor: pointer; flex: 0 0 auto; }
+.search-info { padding: 8px 16px 0; font-size: 13px; color: var(--muted); }
 .sheet h2 { margin: 0 0 10px; font-size: 19px; }
 .sheet h3 { margin: 14px 0 6px; font-size: 15px; }
 .sheet p { margin: 6px 0; }

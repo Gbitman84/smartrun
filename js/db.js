@@ -118,7 +118,9 @@ function demoBackend() {
 }
 
 export async function createDb() {
-  if (firebaseConfig && firebaseConfig.apiKey) {
+  // ?demo=1 → local test mode (this browser only), without touching the cloud.
+  const forceDemo = new URLSearchParams(location.search).has('demo');
+  if (!forceDemo && firebaseConfig && firebaseConfig.apiKey) {
     try { return await firebaseBackend(firebaseConfig); }
     catch (e) { console.error('Firebase init failed', e); throw e; }
   }

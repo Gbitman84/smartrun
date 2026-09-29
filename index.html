@@ -14,11 +14,18 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="sticky-top">
   <header class="topbar">
     <div class="brand">Smart<span>Run</span></div>
     <button id="dayBtn" class="day-btn" type="button" title="בחירת תאריך / היסטוריה">—</button>
     <button id="menuBtn" class="icon-btn" type="button" aria-label="תפריט">☰</button>
   </header>
+  <div id="searchBar" class="search-bar" hidden>
+    <span class="search-ico">🔍</span>
+    <input id="searchInput" type="search" placeholder="חיפוש: שם / כתובת / מספר משלוח / אס׳" autocomplete="off" enterkeyhint="search">
+    <button id="searchClear" class="search-clear" type="button" aria-label="נקה חיפוש" hidden>✕</button>
+  </div>
+  </div>
 
   <div id="demoBanner" class="banner warn" hidden>מצב הדגמה – הנתונים נשמרים רק בדפדפן הזה. לשמירה בענן יש להגדיר Firebase (ראה README).</div>
   <div id="readonlyBanner" class="banner info" hidden>
@@ -32,7 +39,6 @@
       <button id="refreshBtn" class="btn primary" type="button">🔄 רענון מיקום</button>
       <button id="routeBtn" class="btn" type="button">🧭 בנה מסלול</button>
       <button id="importBtn" class="btn" type="button">📥 ייבוא</button>
-      <button id="mapBtn" class="btn" type="button">🗺️ מפה</button>
     </section>
 
     <section class="summary">
@@ -55,11 +61,13 @@
 
     <section id="nextStop" class="next-stop" hidden></section>
 
+    <button id="mapToggle" class="map-toggle" type="button" aria-expanded="false"><span>🗺️ מפה</span><span class="chev">הצג ▾</span></button>
     <section id="mapWrap" class="map-wrap" hidden>
       <div id="map"></div>
       <div id="pickHint" class="pick-hint" hidden>לחץ על המפה כדי לסמן את מיקום הכתובת <button id="pickCancel" class="btn small" type="button">ביטול</button></div>
     </section>
 
+    <div id="searchInfo" class="search-info" hidden></div>
     <section id="list" class="list"></section>
     <div id="empty" class="empty" hidden>
       <p>אין משלוחים ליום הזה.</p>
