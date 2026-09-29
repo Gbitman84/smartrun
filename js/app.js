@@ -449,7 +449,8 @@ function card(d) {
   const fin = isFinal(d);
   const ro = readonly();
   const dist = S.dist[d.shipmentId];
-  const c = el('article', { class: 'card ' + (fin ? 'done' : st.cls || ''), id: 'c-' + d.shipmentId });
+  const doneCls = d.movedTo ? 'done moved' : d.status === 'no_answer_final' ? 'done fail' : 'done ok';
+  const c = el('article', { class: 'card ' + (fin ? doneCls : st.cls || ''), id: 'c-' + d.shipmentId });
 
   c.append(el('div', { class: 'card-top' },
     badge('init', 'ראשוני', stopLabel(d.initialStop, d.initialSub)),

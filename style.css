@@ -17,20 +17,24 @@
   --badge-init: #7c3aed;
   --badge-upd: #2563eb;
   --badge-app: #475569;
-  --done-bg: #f9fafb;
+  --done-bg: #eef0f3;
+  --ok-bg: #e7f8ee;
+  --ok-line: #b7ebc9;
+  --fail-bg: #fdecec;
+  --fail-line: #f6c4c4;
   --shadow: 0 1px 3px rgba(0,0,0,.08);
   --radius: 12px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0b1120; --card: #111827; --text: #f3f4f6; --muted: #9ca3af; --line: #1f2937;
-    --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #0f172a;
+    --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #1f2733; --ok-bg: #173a2a; --ok-line: #25603f; --fail-bg: #3a1d22; --fail-line: #6b2a33;
     --shadow: 0 1px 3px rgba(0,0,0,.5);
   }
 }
 :root[data-theme="dark"] {
   --bg: #0b1120; --card: #111827; --text: #f3f4f6; --muted: #9ca3af; --line: #1f2937;
-  --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #0f172a;
+  --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #1f2733; --ok-bg: #173a2a; --ok-line: #25603f; --fail-bg: #3a1d22; --fail-line: #6b2a33;
 }
 
 * { box-sizing: border-box; }
@@ -126,6 +130,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; border: 1px solid var(--line); border-inline-start: 5px solid var(--primary); }
 .card.temp { border-inline-start-color: var(--warn); }
 .card.done { background: var(--done-bg); border-inline-start-color: #9ca3af; }
+.card.done.ok { background: var(--ok-bg); border-color: var(--ok-line); border-inline-start-color: var(--accent); }
+.card.done.fail { background: var(--fail-bg); border-color: var(--fail-line); border-inline-start-color: var(--danger); }
+.card.done.ok .status-line { color: var(--accent); font-weight: 700; }
 .card.done .strike { text-decoration: line-through; color: var(--muted); }
 .card.highlight { outline: 3px solid #facc15; }
 .card-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
