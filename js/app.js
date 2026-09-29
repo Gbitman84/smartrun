@@ -1,4 +1,5 @@
 import { createDb } from './db.js';
+import { googleMapsKey } from './firebase-config.js';
 import * as maps from './maps/provider.js';
 import { solvePath } from './solver.js';
 import { wazeUrl, gmapsUrl, gmapsSegments } from './nav.js';
@@ -15,7 +16,7 @@ const STATUS = {
   delivered_door:  { label: 'נמסר ליד הדלת',   icon: '🚪', final: true, cls: 'done' },
   no_answer_final: { label: 'לא ענה – סופי',   icon: '❌', final: true, cls: 'nofinal' },
 };
-const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: 'osm', googleKey: '' };
+const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '' };
 
 // ------------------------------------------------------------------ state
 const S = {
@@ -1113,6 +1114,7 @@ async function boot() {
     if (!user) { S.unsubs.forEach((u) => u()); S.unsubs = []; return; }
     const saved = await S.db.getMeta('settings').catch(() => null);
     S.settings = { ...DEFAULT_SETTINGS, ...(saved || {}) };
+    if (!S.settings.googleKey) S.settings.googleKey = DEFAULT_SETTINGS.googleKey;
     maps.configure({ geocoderName: S.settings.geocoder, googleKey: S.settings.googleKey });
     if (prefs.get('mapOpen', false)) toggleMap(true);
     subscribe();
