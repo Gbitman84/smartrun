@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "smartrun", "runtimeExecutable": "python", "runtimeArgs": ["-m", "http.server", "8765"], "port": 8765 }
+    { "name": "smartrun", "runtimeExecutable": "python", "runtimeArgs": ["-m", "http.server", "8765"], "port": 8765 },
+    { "name": "smartroute", "runtimeExecutable": "python", "runtimeArgs": ["-m", "http.server", "8766", "--directory", "../SmartRoute"], "port": 8766 }
   ]
 }
