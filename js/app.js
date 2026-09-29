@@ -46,6 +46,7 @@ const dayKey = (date, version = 1) => (version > 1 ? `${date}_v${version}` : dat
 const parseKey = (key) => { const m = String(key).match(/^(\d{4}-\d{2}-\d{2})(?:_v(\d+))?$/); return { date: m ? m[1] : key, version: m?.[2] ? +m[2] : 1 }; };
 const verLabel = (v, latest, many) => (many ? ` · גרסה ${v}${v === latest ? ' (אחרון)' : ''}` : '');
 function fmtKey(key) { const { date, version } = parseKey(key); return date.split('-').reverse().join('/') + (version > 1 ? ` גרסה ${version}` : ''); }
+const fmtStamp = (ts) => { const d = new Date(ts); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${fmtTime(ts)}`; };
 const stopLabel = (stop, sub) => (stop == null ? null : sub ? `${stop}-${sub}` : `${stop}`);
 const orderKey = (stop, sub) => (stop == null ? Infinity : stop * 1000 + (sub || 0));
 const now = () => Date.now();
@@ -409,7 +410,7 @@ function statusSheet(d) {
     }
     if (d.history?.length) {
       m.append(el('h3', {}, 'היסטוריה'), el('div', { class: 'muted' },
-        d.history.slice().reverse().map((h) => el('div', {}, `${fmtTime(h.at)} · ${STATUS[h.status]?.label || h.status}`))));
+        d.history.slice().reverse().map((h) => el('div', {}, `${fmtStamp(h.at)} · ${STATUS[h.status]?.label || (h.status === 'moved' ? 'הועבר' : h.status)}`))));
     }
   });
 }
@@ -470,11 +471,18 @@ function card(d) {
     ));
   }
   if (d.movedTo) c.append(el('div', { class: 'status-line' }, `➡️ הועבר ל-${fmtKey(d.movedTo)}`));
-  else if (d.status && d.status !== 'pending') c.append(el('div', { class: 'status-line ' + (st.cls || '') }, `${st.icon} ${st.label}${d.statusAt ? ' · ' + fmtTime(d.statusAt) : ''}`));
+  else if (d.status && d.status !== 'pending' && d.status !== 'no_answer_temp') c.append(el('div', { class: 'status-line ' + (st.cls || '') }, `${st.icon} ${st.label}${d.statusAt ? ' · ' + fmtStamp(d.statusAt) : ''}`));
+  // Every "no answer – temporary" attempt, with date and time.
+  const tries = (d.history || []).filter((h) => h.status === 'no_answer_temp');
+  if (tries.length && !d.movedTo) {
+    c.append(el('div', { class: 'status-line temp' }, `📵 לא ענה – זמני${tries.length > 1 ? ` (${tries.length} ניסיונות)` : ''}: `,
+      el('span', { class: 'tries' }, tries.map((h) => fmtStamp(h.at)).join(' · '))));
+  }
 
   const actions = el('div', { class: 'actions' });
   if (!ro && !d.movedTo) {
     if (fin) actions.append(el('button', { class: 'btn', type: 'button', onclick: () => setStatus(d, 'pending') }, '↩ בטל'));
+    if (d.status === 'no_answer_temp') actions.append(el('button', { class: 'btn temp-again', type: 'button', onclick: () => setStatus(d, 'no_answer_temp') }, '📵 שוב לא ענה'));
     actions.append(el('button', { class: 'btn', type: 'button', onclick: () => statusSheet(d) }, fin ? 'שנה סטטוס' : `${st.icon} סטטוס`));
   }
   if (!fin) {
