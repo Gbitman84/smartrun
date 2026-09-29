@@ -210,7 +210,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .ac-list div { padding: 10px; cursor: pointer; border-bottom: 1px solid var(--line); }
 .ac-list div:last-child { border-bottom: 0; }
 .ac-list div:hover, .ac-list div.on { background: var(--info-bg); }
-.ac-list mark { background: #fde68a; color: inherit; border-radius: 3px; }
+.ac-list mark { background: rgba(37, 99, 235, .22); color: var(--primary); font-weight: 700; border-radius: 3px; padding: 0 1px; }
+:root[data-theme="dark"] .ac-list mark { color: #93c5fd; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ac-list mark { color: #93c5fd; } }
 
 /* Import preview table */
 .tbl-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; }
