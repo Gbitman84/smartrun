@@ -16,6 +16,7 @@ async function firebaseBackend(config) {
   const app = initializeApp(config);
   const a = auth.getAuth(app);
   const db = fs.initializeFirestore(app, {
+    ignoreUndefinedProperties: true,
     localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }),
   });
   let uid = null;
@@ -55,7 +56,8 @@ async function firebaseBackend(config) {
     async getDay(date) { const s = await fs.getDoc(dayRef(date)); return s.exists() ? s.data() : null; },
     saveDay: (date, patch) => fs.setDoc(dayRef(date), { ...patch, date, updatedAt: Date.now() }, { merge: true }),
     watchDay: (date, cb) => fs.onSnapshot(dayRef(date), (s) => cb(s.exists() ? s.data() : null)),
-    watchDeliveries: (date, cb, onErr) => fs.onSnapshot(delCol(date), (snap) => cb(snap.docs.map((d) => d.data())), onErr),
+    watchDeliveries: (date, cb, onErr) => fs.onSnapshot(delCol(date), { includeMetadataChanges: true },
+      (snap) => cb(snap.docs.map((d) => d.data()), { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites }), onErr),
     async getDeliveries(date) { const s = await fs.getDocs(delCol(date)); return s.docs.map((d) => d.data()); },
     putDeliveries: (date, arr) => commitChunks(arr.map((d) => (b) => b.set(delRef(date, d.shipmentId), d, { merge: true }))),
     updateDelivery: (date, id, patch) => fs.updateDoc(delRef(date, id), patch),
@@ -83,7 +85,7 @@ function demoBackend() {
     queueMicrotask(() => {
       const d = st.days[date];
       (dayW.get(date) || []).forEach((cb) => cb(d?.doc ? clone(d.doc) : null));
-      (delW.get(date) || []).forEach((cb) => cb(d ? clone(Object.values(d.deliveries)) : []));
+      (delW.get(date) || []).forEach((cb) => cb(d ? clone(Object.values(d.deliveries)) : [], { fromCache: false, pending: false }));
     });
   };
   const watch = (map, date, cb) => {

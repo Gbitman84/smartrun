@@ -49,13 +49,18 @@ async function osrm(base, service, points, params = {}) {
   return data;
 }
 
-// Full duration matrix (seconds) for route optimization.
-export async function matrix(points) {
+// approaches: per point 'curb' (arrive on the right-hand side of the road) or 'unrestricted'.
+const approachParam = (approaches) => (approaches ? { approaches: approaches.join(';') } : {});
+
+// Full duration matrix (seconds) for route optimization. One-way streets and turn
+// restrictions come from the OSM road graph; 'curb' adds side-of-road awareness.
+export async function matrix(points, approaches) {
+  const params = { annotations: 'duration', ...approachParam(approaches) };
   try {
-    const d = await osrm(OSRM_CAR, 'table', points, { annotations: 'duration' });
+    const d = await osrm(OSRM_CAR, 'table', points, params);
     return d.durations;
   } catch {
-    const d = await osrm(OSRM_CAR_ALT, 'table', points, { annotations: 'duration' });
+    const d = await osrm(OSRM_CAR_ALT, 'table', points, params);
     return d.durations;
   }
 }
@@ -74,8 +79,8 @@ export async function fromOrigin(points, mode) {
 }
 
 // Encoded polyline of the driving route through the points in order.
-export async function routeLine(points) {
-  const d = await osrm(OSRM_CAR, 'route', points, { overview: 'full', geometries: 'polyline' });
+export async function routeLine(points, approaches) {
+  const d = await osrm(OSRM_CAR, 'route', points, { overview: 'full', geometries: 'polyline', ...approachParam(approaches) });
   return { polyline: d.routes[0].geometry, distance: d.routes[0].distance, duration: d.routes[0].duration };
 }
 

@@ -195,11 +195,11 @@ async function resolvePoint(spec) {
   return { lat: r.lat, lng: r.lng, type: 'address', text: `${street} ${houseNo}, ${city}`.replace(/\s+,/, ',') };
 }
 
-async function buildMatrix(points) {
+async function buildMatrix(points, approaches) {
   const fallback = () => points.map((a) => points.map((b) => haversine(a, b) / 7));
   if (points.length > 100) return fallback();
   try {
-    const m = await maps.matrix(points);
+    const m = await maps.matrix(points, approaches);
     return m.map((row, i) => row.map((v, j) => (v == null ? haversine(points[i], points[j]) / 7 : v)));
   } catch (e) {
     console.warn('matrix fallback', e);
@@ -229,7 +229,9 @@ async function buildRoute(kind, startSpec, endSpec) {
   });
 
   const points = [start, ...gList, ...(end ? [end] : [])];
-  const matrix = await buildMatrix(points);
+  // Stops are approached from the curb side (right-hand traffic); start/end are unrestricted.
+  const approaches = points.map((p, i) => (i === 0 || (end && i === points.length - 1) ? 'unrestricted' : 'curb'));
+  const matrix = await buildMatrix(points, approaches);
   const order = solvePath(matrix, { hasEnd: !!end });
   const ordered = order.map((i) => gList[i - 1]);
 
@@ -250,7 +252,8 @@ async function buildRoute(kind, startSpec, endSpec) {
   await S.db.updateMany(S.date, updates);
 
   let line = null;
-  try { line = await maps.routeLine([start, ...ordered, ...(end ? [end] : [])]); } catch (e) { console.warn('route line', e); }
+  const linePts = [start, ...ordered, ...(end ? [end] : [])];
+  try { line = await maps.routeLine(linePts, linePts.map((p, i) => (i === 0 || (end && i === linePts.length - 1) ? 'unrestricted' : 'curb'))); } catch (e) { console.warn('route line', e); }
 
   const dayPatch = {
     start, end: end || null,
@@ -1042,10 +1045,12 @@ function subscribe() {
   render();
   const date = S.date;
   S.unsubs.push(S.db.watchDay(date, (day) => { if (date !== S.date) return; S.day = day; render(); }));
-  S.unsubs.push(S.db.watchDeliveries(date, (list) => {
+  S.unsubs.push(S.db.watchDeliveries(date, (list, meta = {}) => {
     if (date !== S.date) return;
     S.deliveries = list;
+    S.synced = !meta.fromCache;
     render();
+    if (meta.fromCache) return; // wait for the server before writing counters or prompting
     syncSummary();
     maybePromptCarryOver();
   }, (e) => toast('שגיאת חיבור לענן: ' + e.message, { err: true, ms: 8000 })));
@@ -1113,6 +1118,10 @@ async function boot() {
     subscribe();
     ensureStreets(S.settings.defaultCity);
   });
+}
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
 boot();
