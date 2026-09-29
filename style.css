@@ -228,3 +228,4 @@ table.preview tr.off td { opacity: .45; }
 .progress { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 8px; }
 .progress > div { height: 100%; background: var(--primary); width: 0; transition: width .3s; }
 .usage { font-size: 13px; color: var(--muted); }
+.days-list button.sub { margin-inline-start: 18px; opacity: .85; font-size: 14px; }

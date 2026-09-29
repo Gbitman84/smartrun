@@ -54,7 +54,7 @@ async function firebaseBackend(config) {
       return snap.docs.map((d) => d.data());
     },
     async getDay(date) { const s = await fs.getDoc(dayRef(date)); return s.exists() ? s.data() : null; },
-    saveDay: (date, patch) => fs.setDoc(dayRef(date), { ...patch, date, updatedAt: Date.now() }, { merge: true }),
+    saveDay: (key, patch) => fs.setDoc(dayRef(key), { date: key.slice(0, 10), ...patch, key, updatedAt: Date.now() }, { merge: true }),
     watchDay: (date, cb) => fs.onSnapshot(dayRef(date), (s) => cb(s.exists() ? s.data() : null)),
     watchDeliveries: (date, cb, onErr) => fs.onSnapshot(delCol(date), { includeMetadataChanges: true },
       (snap) => cb(snap.docs.map((d) => d.data()), { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites }), onErr),
@@ -101,7 +101,7 @@ function demoBackend() {
     signIn: async () => {}, signOut: async () => {},
     listDays: async () => Object.values(st.days).map((d) => d.doc).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date)),
     getDay: async (date) => (st.days[date]?.doc ? clone(st.days[date].doc) : null),
-    saveDay: (date, patch) => write(date, (d) => { d.doc = { ...(d.doc || {}), ...clone(patch), date, updatedAt: Date.now() }; }),
+    saveDay: (key, patch) => write(key, (d) => { d.doc = { date: key.slice(0, 10), ...(d.doc || {}), ...clone(patch), key, updatedAt: Date.now() }; }),
     watchDay: (date, cb) => watch(dayW, date, cb),
     watchDeliveries: (date, cb) => watch(delW, date, cb),
     getDeliveries: async (date) => clone(Object.values(st.days[date]?.deliveries || {})),

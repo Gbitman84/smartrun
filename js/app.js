@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 
 const S = {
   db: null, user: null,
   today: todayStr(), date: todayStr(),
+  version: 1, key: todayStr(), versions: [1], // several work runs ("versions") per date
   day: null, deliveries: [], unsubs: [],
   unlocked: false,
   hideDone: prefs.get('hideDone', false),
@@ -37,7 +38,14 @@ const S = {
 const isFinal = (d) => !!STATUS[d.status]?.final || !!d.movedTo;
 const isActive = (d) => !isFinal(d);
 const hasCoords = (d) => d.lat != null && d.lng != null;
-const readonly = () => S.date < S.today && !S.unlocked;
+const latestVersion = () => Math.max(...S.versions, S.version);
+const isArchive = () => S.date < S.today || S.version < latestVersion();
+const readonly = () => isArchive() && !S.unlocked;
+// Firestore key of a work run: "2026-09-30" for version 1, "2026-09-30_v2" for version 2 …
+const dayKey = (date, version = 1) => (version > 1 ? `${date}_v${version}` : date);
+const parseKey = (key) => { const m = String(key).match(/^(\d{4}-\d{2}-\d{2})(?:_v(\d+))?$/); return { date: m ? m[1] : key, version: m?.[2] ? +m[2] : 1 }; };
+const verLabel = (v, latest, many) => (many ? ` · גרסה ${v}${v === latest ? ' (אחרון)' : ''}` : '');
+function fmtKey(key) { const { date, version } = parseKey(key); return date.split('-').reverse().join('/') + (version > 1 ? ` גרסה ${version}` : ''); }
 const stopLabel = (stop, sub) => (stop == null ? null : sub ? `${stop}-${sub}` : `${stop}`);
 const orderKey = (stop, sub) => (stop == null ? Infinity : stop * 1000 + (sub || 0));
 const now = () => Date.now();
@@ -224,7 +232,7 @@ async function geocodeDelivery(d, { force = false } = {}) {
   const patch = res.lat != null
     ? { lat: res.lat, lng: res.lng, geoStatus: res.precision === 'house' ? 'ok' : res.precision === 'manual' ? 'manual' : 'approx' }
     : { lat: null, lng: null, geoStatus: 'failed' };
-  await S.db.updateDelivery(S.date, d.shipmentId, patch);
+  await S.db.updateDelivery(S.key, d.shipmentId, patch);
   return patch;
 }
 
@@ -237,7 +245,7 @@ async function geocodeMany(list, { force = false } = {}) {
     toast(`מאתר כתובות ${i}/${list.length}…`, { ms: 0 });
     const k = addressKey(d);
     let patch = seen.get(k);
-    if (patch) await S.db.updateDelivery(S.date, d.shipmentId, patch);
+    if (patch) await S.db.updateDelivery(S.key, d.shipmentId, patch);
     else { patch = await geocodeDelivery(d, { force }); seen.set(k, patch); }
     if (patch.geoStatus === 'failed') failed++;
   }
@@ -313,7 +321,7 @@ async function buildRoute(kind, startSpec, endSpec) {
   for (const d of S.deliveries) {
     if (!touched.has(d.shipmentId) && d.updatedStop != null) updates.push({ id: d.shipmentId, patch: { updatedStop: null, updatedSub: null } });
   }
-  await S.db.updateMany(S.date, updates);
+  await S.db.updateMany(S.key, updates);
 
   let line = null;
   const linePts = [start, ...ordered, ...(end ? [end] : [])];
@@ -327,7 +335,7 @@ async function buildRoute(kind, startSpec, endSpec) {
     updatedBuiltAt: now(),
   };
   if (kind === 'initial') Object.assign(dayPatch, { hasInitialRoute: true, initialBuiltAt: now() });
-  await S.db.saveDay(S.date, dayPatch);
+  await S.db.saveDay(S.key, dayPatch);
 
   const skipped = S.deliveries.filter((d) => isActive(d) && !hasCoords(d)).length;
   toast(`${kind === 'initial' ? 'מסלול ראשוני' : 'מסלול מעודכן'} נבנה: ${ordered.length} עצירות` +
@@ -381,7 +389,7 @@ async function refreshLocation() {
 async function setStatus(d, status) {
   if (readonly()) return;
   const history = [...(d.history || []), { status, at: now() }].slice(-30);
-  await S.db.updateDelivery(S.date, d.shipmentId, { status, statusAt: now(), history });
+  await S.db.updateDelivery(S.key, d.shipmentId, { status, statusAt: now(), history });
   if (STATUS[status].final) toast(`${d.name || d.shipmentId}: ${STATUS[status].label}`);
 }
 
@@ -460,7 +468,7 @@ function card(d) {
       !dist.car && !dist.foot ? el('span', { class: 'air' }, `✈️ ${fmtDist(dist.air)} (אווירי)`) : null,
     ));
   }
-  if (d.movedTo) c.append(el('div', { class: 'status-line' }, `➡️ הועבר ליום ${d.movedTo.split('-').reverse().join('/')}`));
+  if (d.movedTo) c.append(el('div', { class: 'status-line' }, `➡️ הועבר ל-${fmtKey(d.movedTo)}`));
   else if (d.status && d.status !== 'pending') c.append(el('div', { class: 'status-line ' + (st.cls || '') }, `${st.icon} ${st.label}${d.statusAt ? ' · ' + fmtTime(d.statusAt) : ''}`));
 
   const actions = el('div', { class: 'actions' });
@@ -563,10 +571,14 @@ function renderCounts() {
 function render() {
   if (!S.user) return;
   const ro = readonly();
-  $('#readonlyBanner').hidden = !(S.date < S.today);
-  $('#readonlyText').textContent = ro ? `צפייה ב${fmtDate(S.date, false)} – קריאה בלבד` : `עריכת יום קודם: ${fmtDate(S.date)}`;
+  const many = S.versions.length > 1, latest = latestVersion();
+  $('#readonlyBanner').hidden = !isArchive();
+  $('#readonlyText').textContent = ro
+    ? `צפייה ב${fmtDate(S.date, false)}${verLabel(S.version, latest, many)} – קריאה בלבד`
+    : `עריכת ${fmtDate(S.date, false)}${verLabel(S.version, latest, many)}`;
+  $('#goTodayBtn').textContent = S.date === S.today ? 'לגרסה האחרונה' : 'חזרה להיום';
   $('#unlockBtn').hidden = !ro;
-  $('#dayBtn').textContent = '📅 ' + fmtDate(S.date);
+  $('#dayBtn').textContent = '📅 ' + fmtDate(S.date) + verLabel(S.version, latest, many);
   ['#routeBtn', '#importBtn'].forEach((s) => ($(s).disabled = ro));
   $('#hideDone').checked = S.hideDone;
   $('#sortSel').value = S.sort;
@@ -651,11 +663,11 @@ async function onMapPick(e) {
   S.pickFor = null;
   $('#pickHint').hidden = true;
   const { lat, lng } = e.latlng;
-  await S.db.updateDelivery(S.date, d.shipmentId, { lat, lng, geoStatus: 'manual' });
+  await S.db.updateDelivery(S.key, d.shipmentId, { lat, lng, geoStatus: 'manual' });
   // Remember for next time this address shows up.
   S.db.setGeo(addressKey(d), { lat, lng, precision: 'manual', src: 'manual', at: now() }).catch(() => {});
   const same = S.deliveries.filter((x) => x.shipmentId !== d.shipmentId && addressKey(x) === addressKey(d));
-  if (same.length) await S.db.updateMany(S.date, same.map((x) => ({ id: x.shipmentId, patch: { lat, lng, geoStatus: 'manual' } })));
+  if (same.length) await S.db.updateMany(S.key, same.map((x) => ({ id: x.shipmentId, patch: { lat, lng, geoStatus: 'manual' } })));
   toast('המיקום נשמר ✓');
 }
 
@@ -691,7 +703,7 @@ function editSheet(d) {
       const data = collect();
       const addrChanged = addressKey(data) !== addressKey(d);
       closeAll();
-      await S.db.updateDelivery(S.date, d.shipmentId, data);
+      await S.db.updateDelivery(S.key, d.shipmentId, data);
       if (addrChanged || recheck) {
         toast('בודק כתובת…', { ms: 0 });
         const p = await geocodeDelivery({ ...d, ...data }, { force: true });
@@ -705,7 +717,7 @@ function editSheet(d) {
       el('button', { class: 'btn', type: 'button', onclick: () => { closeAll(); startPick(d); } }, '📍 סמן על המפה'),
       el('button', { class: 'btn danger', type: 'button', onclick: async () => {
         if (await confirmModal({ title: 'מחיקת משלוח', body: `למחוק את ${esc(d.shipmentId)} (${esc(d.name || '')})?`, okText: 'מחק', danger: true })) {
-          closeAll(); await S.db.deleteDeliveries(S.date, [d.shipmentId]); toast('נמחק');
+          closeAll(); await S.db.deleteDeliveries(S.key, [d.shipmentId]); toast('נמחק');
         }
       } }, '🗑 מחק'),
     ));
@@ -831,8 +843,8 @@ function previewSheet(rows) {
           initialStop: null, initialSub: null, updatedStop: null, updatedSub: null, importedAt: now(),
         };
       });
-      if (!S.day) await S.db.saveDay(S.date, { createdAt: now(), hasInitialRoute: false });
-      await S.db.putDeliveries(S.date, docs);
+      if (!S.day) await S.db.saveDay(S.key, { date: S.date, version: S.version, createdAt: now(), hasInitialRoute: false });
+      await S.db.putDeliveries(S.key, docs);
       toast(`יובאו ${docs.length} משלוחים ✓`);
       const toGeo = docs.filter((d) => d.geoStatus === 'pending').map((d) => ({ ...existing.get(d.shipmentId), ...d }));
       await geocodeMany(toGeo);
@@ -948,9 +960,22 @@ function routeBuildSheet(kind) {
   });
 }
 
-// ------------------------------------------------------------------ days: history & new day
-function openDate(date) {
+// ------------------------------------------------------------------ days: history, versions & new day
+async function versionsOf(date) {
+  const days = await S.db.listDays().catch(() => []);
+  return days.filter((d) => (d.date || parseKey(d.key || '').date) === date)
+    .map((d) => ({ ...d, version: d.version || parseKey(d.key || d.date).version }))
+    .sort((a, b) => a.version - b.version);
+}
+
+// Open a date. Without a version → its latest version.
+async function openDate(date, version) {
+  const vs = await versionsOf(date);
+  const nums = vs.map((d) => d.version);
   S.date = date;
+  S.versions = nums.length ? nums : [1];
+  S.version = version || Math.max(...S.versions);
+  S.key = dayKey(S.date, S.version);
   S.unlocked = false;
   S.dist = {};
   S.mapFitted = false;
@@ -958,77 +983,97 @@ function openDate(date) {
 }
 
 async function daysSheet() {
-  const days = await S.db.listDays().catch(() => []);
+  const days = (await S.db.listDays().catch(() => []))
+    .map((d) => ({ ...d, date: d.date || parseKey(d.key).date, version: d.version || parseKey(d.key || d.date).version }));
   openModal((m, close) => {
     const input = el('input', { type: 'date', value: S.date });
     m.append(
-      el('h2', {}, '📅 ימים ותאריכים'),
+      el('h2', {}, '📅 ימים וגרסאות'),
       el('div', { class: 'row2' }, el('label', { class: 'field' }, 'פתח תאריך', input),
         el('div', { class: 'field' }, ' ', el('button', { class: 'btn primary', type: 'button', onclick: () => { if (input.value) { closeAll(); openDate(input.value); } } }, 'פתח'))),
       el('h3', {}, 'ימים קודמים'),
     );
+    if (!days.some((d) => d.date === S.today)) days.push({ date: S.today, version: 1, total: 0, active: 0 });
+    const byDate = new Map();
+    days.forEach((d) => { if (!byDate.has(d.date)) byDate.set(d.date, []); byDate.get(d.date).push(d); });
     const list = el('div', { class: 'days-list' });
-    if (!days.some((d) => d.date === S.today)) days.unshift({ date: S.today, total: 0, active: 0 });
-    days.forEach((d) => list.append(el('button', {
-      class: 'btn' + (d.date === S.date ? ' cur' : ''), type: 'button', onclick: () => { closeAll(); openDate(d.date); },
-    }, el('span', {}, fmtDate(d.date)), el('span', { class: 'muted' }, `${d.total ?? 0} משלוחים${d.active ? ` · ${d.active} פעילים` : ''}`))));
+    [...byDate.keys()].sort().reverse().forEach((date) => {
+      const vs = byDate.get(date).sort((a, b) => b.version - a.version);
+      const latest = vs[0].version, many = vs.length > 1;
+      vs.forEach((d) => list.append(el('button', {
+        class: 'btn' + (date === S.date && d.version === S.version ? ' cur' : '') + (many && d.version !== latest ? ' sub' : ''), type: 'button',
+        onclick: () => { closeAll(); openDate(date, d.version); },
+      }, el('span', {}, fmtDate(date) + verLabel(d.version, latest, many)),
+        el('span', { class: 'muted' }, `${d.total ?? 0} משלוחים${d.active ? ` · ${d.active} פעילים` : ''}`))));
+    });
     m.append(list, el('div', { class: 'sheet-actions' },
-      el('button', { class: 'btn', type: 'button', onclick: () => newDaySheet() }, '🆕 יום חדש'),
+      el('button', { class: 'btn', type: 'button', onclick: () => newDaySheet() }, '🆕 יום חדש / גרסה חדשה'),
       el('button', { class: 'btn', type: 'button', onclick: close }, 'סגור')));
   });
 }
 
-async function moveActives(fromDate, toDate, items) {
+async function moveActives(fromKey, toKey, items) {
+  const to = parseKey(toKey);
   const docs = items.map((d) => ({
     ...d, initialStop: null, initialSub: null, updatedStop: null, updatedSub: null, movedTo: null,
-    movedFrom: fromDate, history: [...(d.history || []), { status: 'moved', at: now(), from: fromDate }].slice(-30),
+    movedFrom: fromKey, history: [...(d.history || []), { status: 'moved', at: now(), from: fromKey }].slice(-30),
   }));
-  const target = await S.db.getDay(toDate);
-  if (!target) await S.db.saveDay(toDate, { createdAt: now(), hasInitialRoute: false });
-  await S.db.putDeliveries(toDate, docs);
-  await S.db.updateMany(fromDate, items.map((d) => ({ id: d.shipmentId, patch: { movedTo: toDate } })));
+  const target = await S.db.getDay(toKey);
+  if (!target) await S.db.saveDay(toKey, { date: to.date, version: to.version, createdAt: now(), hasInitialRoute: false });
+  await S.db.putDeliveries(toKey, docs);
+  await S.db.updateMany(fromKey, items.map((d) => ({ id: d.shipmentId, patch: { movedTo: toKey } })));
+}
+
+// Where "new day" lands for a date: its latest version if still empty, otherwise the next version.
+async function nextRunFor(date) {
+  const vs = await versionsOf(date);
+  if (date === S.date) vs.forEach((v) => { if (v.version === S.version) v.total = S.deliveries.length; });
+  if (!vs.length) return { version: 1, fresh: true };
+  const last = vs[vs.length - 1];
+  return (last.total || 0) > 0 ? { version: last.version + 1, fresh: true } : { version: last.version, fresh: false };
 }
 
 function newDaySheet() {
   openModal((m, close) => {
-    const cur = S.date;
+    const curKey = S.key;
+    const curLabel = fmtDate(S.date, false) + verLabel(S.version, latestVersion(), S.versions.length > 1);
     const act = S.deliveries.filter(isActive);
     const input = el('input', { type: 'date', value: S.today });
     const body = el('div', {});
-    m.append(el('h2', {}, '🆕 יום חדש'), el('label', { class: 'field' }, 'תאריך היום החדש', input), body);
+    m.append(el('h2', {}, '🆕 יום חדש / גרסה חדשה'),
+      el('p', { class: 'muted' }, 'אם בתאריך שנבחר כבר יש עבודה – היא נשמרת כגרסה קודמת, ונפתחת גרסה חדשה (אחרון).'),
+      el('label', { class: 'field' }, 'תאריך', input), body);
 
-    const draw = () => {
+    const draw = async () => {
       const target = input.value;
       body.replaceChildren();
       if (!target) return;
-      const same = target === cur;
-      if (act.length) body.append(el('div', { class: 'danger-box', style: 'margin-top:10px' }, `⚠️ ב${fmtDate(cur, false)} נשארו ${act.length} משלוחים פעילים (ממתין / לא ענה זמני)!`));
-      const actions = el('div', { class: 'status-opts', style: 'margin-top:10px' });
-      if (act.length && !same) {
+      const run = await nextRunFor(target);
+      if (input.value !== target) return;
+      const tKey = dayKey(target, run.version);
+      const tLabel = fmtDate(target, false) + (run.version > 1 ? ` · גרסה ${run.version} (אחרון)` : '');
+      if (tKey === curKey) { body.append(el('p', {}, 'זו כבר הגרסה הפתוחה עכשיו, והיא ריקה.')); return; }
+      if (act.length) body.append(el('div', { class: 'danger-box', style: 'margin-top:10px' }, `⚠️ ב${curLabel} נשארו ${act.length} משלוחים פעילים (ממתין / לא ענה זמני)!`));
+      body.append(el('p', {}, 'ייפתח: ', el('b', {}, tLabel)));
+      const actions = el('div', { class: 'status-opts', style: 'margin-top:6px' });
+      if (act.length) {
         actions.append(el('button', { class: 'btn primary', type: 'button', onclick: async () => {
-          closeAll(); await moveActives(cur, target, act); toast(`${act.length} משלוחים הועברו ל-${target.split('-').reverse().join('/')}`); openDate(target);
-        } }, `➡️ העבר ${act.length} פעילים ל${fmtDate(target)}`));
+          closeAll(); await moveActives(curKey, tKey, act); toast(`${act.length} משלוחים הועברו ל-${fmtKey(tKey)}`); openDate(target, run.version);
+        } }, `➡️ העבר ${act.length} פעילים ופתח ${tLabel}`));
       }
-      actions.append(el('button', { class: 'btn danger', type: 'button', onclick: async () => {
-        const word = act.length || same ? 'איפוס' : null;
-        const ok = await confirmModal({
-          title: same ? 'איפוס היום הנוכחי' : 'יום חדש ריק',
-          body: same
-            ? `<b style="color:var(--danger)">כל ${S.deliveries.length} המשלוחים של ${esc(fmtDate(cur))} יימחקו, כולל המסלול הראשוני.</b>`
-            : act.length ? `<b style="color:var(--danger)">${act.length} משלוחים פעילים יישארו ב${esc(fmtDate(cur, false))} ולא יועברו.</b> היום הקודם נשמר בהיסטוריה.` : 'היום הקודם נשמר בהיסטוריה.',
-          okText: same ? 'אפס' : 'התחל יום ריק', danger: true, requireWord: word,
-        });
-        if (!ok) return;
-        closeAll();
-        if (same) {
-          await S.db.deleteDeliveries(cur, S.deliveries.map((d) => d.shipmentId));
-          await S.db.saveDay(cur, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null });
-          toast('היום אופס');
-        } else {
-          if (!(await S.db.getDay(target))) await S.db.saveDay(target, { createdAt: now(), hasInitialRoute: false });
-          openDate(target);
+      actions.append(el('button', { class: 'btn' + (act.length ? ' danger-outline' : ' primary'), type: 'button', onclick: async () => {
+        if (act.length) {
+          const ok = await confirmModal({
+            title: 'פתיחה ריקה',
+            body: `<b style="color:var(--danger)">${act.length} משלוחים פעילים יישארו ב${esc(curLabel)} ולא יועברו.</b> הגרסה הנוכחית נשמרת בהיסטוריה.`,
+            okText: 'פתח ריק', danger: true, requireWord: 'איפוס',
+          });
+          if (!ok) return;
         }
-      } }, same ? '🗑 איפוס היום הנוכחי' : '🆕 התחל יום ריק (בלי להעביר)'));
+        closeAll();
+        if (!(await S.db.getDay(tKey))) await S.db.saveDay(tKey, { date: target, version: run.version, createdAt: now(), hasInitialRoute: false });
+        openDate(target, run.version);
+      } }, `🆕 פתח ${tLabel} ריק${act.length ? ' (בלי להעביר)' : ''}`));
       body.append(actions);
     };
     input.addEventListener('change', draw);
@@ -1038,19 +1083,20 @@ function newDaySheet() {
 }
 
 async function maybePromptCarryOver() {
-  if (S.movePromptShown || S.date !== S.today || S.deliveries.length) return;
+  if (S.movePromptShown || S.date !== S.today || S.version !== latestVersion() || S.deliveries.length) return;
   S.movePromptShown = true;
   const days = await S.db.listDays(10).catch(() => []);
-  const prev = days.find((d) => d.date < S.today && d.active > 0);
+  const prev = days.find((d) => (d.date || '') < S.today && d.active > 0);
   if (!prev) return;
-  const items = (await S.db.getDeliveries(prev.date)).filter(isActive);
+  const prevKey = prev.key || prev.date;
+  const items = (await S.db.getDeliveries(prevKey)).filter(isActive);
   if (!items.length) return;
   const ok = await confirmModal({
     title: 'נשארו משלוחים מיום קודם',
-    body: `ב${esc(fmtDate(prev.date, false))} נשארו <b>${items.length}</b> משלוחים פעילים. להעביר אותם להיום?`,
-    okText: 'העבר להיום',
+    body: `ב-${esc(fmtKey(prevKey))} נשארו <b>${items.length}</b> משלוחים פעילים. להעביר אותם לכאן?`,
+    okText: 'העבר',
   });
-  if (ok) { await moveActives(prev.date, S.today, items); toast(`${items.length} משלוחים הועברו להיום`); }
+  if (ok) { await moveActives(prevKey, S.key, items); toast(`${items.length} משלוחים הועברו`); }
 }
 
 // ------------------------------------------------------------------ export, segments, settings, menu
@@ -1058,10 +1104,10 @@ function exportCsv() {
   const head = ['מסלול ראשוני', 'מסלול מעודכן', 'סדר אפליקציה', 'מספר משלוח', 'שם', 'רחוב', 'מספר בית', 'עיר', "אס' 2", 'סטטוס', 'שעת סטטוס', 'איתור', 'lat', 'lng'];
   const rows = S.deliveries.slice().sort((a, b) => orderKey(a.initialStop, a.initialSub) - orderKey(b.initialStop, b.initialSub)).map((d) => [
     stopLabel(d.initialStop, d.initialSub) ?? '', stopLabel(d.updatedStop, d.updatedSub) ?? '', d.appOrder ?? '', d.shipmentId, d.name, d.street, d.houseNo, d.city, d.ref ?? '',
-    d.movedTo ? 'הועבר ' + d.movedTo : STATUS[d.status]?.label ?? '', d.statusAt ? new Date(d.statusAt).toLocaleString('he-IL') : '', d.geoStatus ?? '', d.lat ?? '', d.lng ?? '',
+    d.movedTo ? 'הועבר ' + fmtKey(d.movedTo) : STATUS[d.status]?.label ?? '', d.statusAt ? new Date(d.statusAt).toLocaleString('he-IL') : '', d.geoStatus ?? '', d.lat ?? '', d.lng ?? '',
   ]);
   const csv = '﻿' + [head, ...rows].map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
-  const a = el('a', { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })), download: `smartrun-${S.date}.csv` });
+  const a = el('a', { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })), download: `smartrun-${S.key}.csv` });
   document.body.append(a); a.click(); a.remove();
 }
 
@@ -1121,14 +1167,14 @@ async function resetDay() {
   const act = S.deliveries.filter(isActive).length;
   const body = el('div', {},
     act ? el('div', { class: 'danger-box' }, `⚠️ נשארו ${act} משלוחים פעילים (ממתין / לא ענה זמני)!`) : null,
-    el('p', { html: `<b style="color:var(--danger)">כל ${S.deliveries.length} המשלוחים של ${esc(fmtDate(S.date))} יימחקו, כולל המסלול הראשוני והמעודכן.</b>` }),
+    el('p', { html: `<b style="color:var(--danger)">כל ${S.deliveries.length} המשלוחים של ${esc(fmtDate(S.date) + verLabel(S.version, latestVersion(), S.versions.length > 1))} יימחקו, כולל המסלול הראשוני והמעודכן.</b>` }),
     act ? el('p', { class: 'muted' }, 'כדי להעביר אותם ליום אחר במקום למחוק: ☰ ← יום חדש.') : null,
   );
   const ok = await confirmModal({ title: '🗑 איפוס היום', body, okText: 'אפס', danger: true, requireWord: 'איפוס' });
   if (!ok) return;
   closeAll();
-  await S.db.deleteDeliveries(S.date, S.deliveries.map((d) => d.shipmentId));
-  await S.db.saveDay(S.date, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null, updatedBuiltAt: null });
+  await S.db.deleteDeliveries(S.key, S.deliveries.map((d) => d.shipmentId));
+  await S.db.saveDay(S.key, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null, updatedBuiltAt: null });
   S.dist = {};
   toast('היום אופס');
 }
@@ -1153,10 +1199,10 @@ function subscribe() {
   S.unsubs = [];
   S.day = null; S.deliveries = [];
   render();
-  const date = S.date;
-  S.unsubs.push(S.db.watchDay(date, (day) => { if (date !== S.date) return; S.day = day; render(); }));
+  const date = S.key;
+  S.unsubs.push(S.db.watchDay(date, (day) => { if (date !== S.key) return; S.day = day; render(); }));
   S.unsubs.push(S.db.watchDeliveries(date, (list, meta = {}) => {
-    if (date !== S.date) return;
+    if (date !== S.key) return;
     S.deliveries = list;
     S.synced = !meta.fromCache;
     render();
@@ -1172,7 +1218,7 @@ function syncSummary() {
   const active = S.deliveries.filter(isActive).length;
   if (!total && !S.day) return;
   if (S.day?.total === total && S.day?.active === active) return;
-  S.db.saveDay(S.date, { total, active }).catch(() => {});
+  S.db.saveDay(S.key, { date: S.date, version: S.version, total, active }).catch(() => {});
 }
 
 function bindUi() {
@@ -1195,7 +1241,7 @@ function bindUi() {
     if (['drive', 'walk', 'dist'].includes(S.sort) && !S.distAt) toast('לחץ "רענון מיקום" כדי לחשב מרחקים', { ms: 4000 });
   });
   $('#unlockBtn').addEventListener('click', async () => {
-    if (await confirmModal({ title: 'עריכת יום קודם', body: `לאפשר עריכה של ${esc(fmtDate(S.date))}?` })) { S.unlocked = true; render(); }
+    if (await confirmModal({ title: 'עריכת ארכיון', body: `לאפשר עריכה של ${esc(fmtDate(S.date, false) + verLabel(S.version, latestVersion(), S.versions.length > 1))}?` })) { S.unlocked = true; render(); }
   });
   $('#goTodayBtn').addEventListener('click', () => openDate(S.today));
   document.addEventListener('click', (e) => { if (e.target.closest('[data-action="import"]')) importSheet(); });
@@ -1233,7 +1279,7 @@ async function boot() {
     if (!S.settings.googleKey) S.settings.googleKey = DEFAULT_SETTINGS.googleKey;
     maps.configure({ geocoderName: S.settings.geocoder, googleKey: S.settings.googleKey });
     if (prefs.get('mapOpen', false)) toggleMap(true);
-    subscribe();
+    await openDate(S.today);
     ensureStreets(S.settings.defaultCity);
   });
 }
