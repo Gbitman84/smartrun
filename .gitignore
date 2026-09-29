@@ -1,3 +1,4 @@
 sample-data.tsv
 *.local.*
 node_modules/
+firebase-debug.log

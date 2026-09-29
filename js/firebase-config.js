@@ -1,15 +1,11 @@
-// Paste your Firebase web app config here (Firebase console → Project settings → Your apps → SDK setup → Config).
-// These values are public by design; access is protected by firestore.rules (only your signed-in account).
-// While this is null, SmartRun runs in DEMO mode (data kept only in this browser – for testing).
-export const firebaseConfig = null;
-
-/* Example:
+// Firebase web app config (project smartrun-gbit). These values are public by design;
+// access is protected by firestore.rules (only your signed-in account).
+// Set to null to run in DEMO mode (data kept only in this browser – for testing).
 export const firebaseConfig = {
-  apiKey: "AIza...",
-  authDomain: "smartrun-xxxx.firebaseapp.com",
-  projectId: "smartrun-xxxx",
-  storageBucket: "smartrun-xxxx.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abcdef",
+  apiKey: 'AIzaSyCDTUNXA7o1jZo2quZ1bBhNj7SK5yjf8fE',
+  authDomain: 'smartrun-gbit.firebaseapp.com',
+  projectId: 'smartrun-gbit',
+  storageBucket: 'smartrun-gbit.firebasestorage.app',
+  messagingSenderId: '265332673817',
+  appId: '1:265332673817:web:128578d24c66ba4f87c988',
 };
-*/
